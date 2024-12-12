@@ -6,24 +6,23 @@
 
 use alloc::format;
 use core::{cell::RefCell, mem::MaybeUninit, str::FromStr as _};
+
+use embassy_executor::Spawner;
 use embassy_net::{
     dns::DnsSocket,
     tcp::client::{TcpClient, TcpClientState},
 };
 use embassy_time::Timer;
 use embedded_hal_bus::spi::RefCellDevice;
-use simplyplural::HttpClient;
-
-use embassy_executor::Spawner;
 use epd_waveshare::{
-    epd2in13_v2::Display2in13 as EpdBuffer, graphics::DisplayRotation,
+    epd2in9bc::Display2in9bc as EpdBuffer, graphics::DisplayRotation,
     prelude::WaveshareDisplay as _,
 };
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
     delay::Delay,
-    gpio::{self},
+    gpio::{self, NoPin},
     peripherals::{LPWR, SPI2},
     prelude::*,
     rtc_cntl::Rtc,
@@ -31,6 +30,7 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use rusttype::Font;
+use simplyplural::HttpClient;
 
 mod draw;
 mod simplyplural;
@@ -79,12 +79,12 @@ fn coma(lpwr: LPWR) -> ! {
 }
 
 type Spi<'a> = esp_hal::spi::master::Spi<'a, esp_hal::Blocking, SPI2>;
-type SpiBus<'a> = RefCellDevice<'a, Spi<'a>, gpio::Output<'a, gpio::GpioPin<15>>, Delay>;
-type EpdDisplay<'a> = epd_waveshare::epd2in13_v2::Epd2in13<
+type SpiBus<'a> = RefCellDevice<'a, Spi<'a>, gpio::Output<'a, gpio::GpioPin<5>>, Delay>;
+type EpdDisplay<'a> = epd_waveshare::epd2in9bc::Epd2in9bc<
     SpiBus<'a>,
-    gpio::Input<'static, gpio::GpioPin<25>>,
-    gpio::Output<'static, gpio::GpioPin<27>>,
-    gpio::Output<'static, gpio::GpioPin<26>>,
+    gpio::Input<'static, gpio::GpioPin<4>>,
+    gpio::Output<'static, gpio::GpioPin<17>>,
+    gpio::Output<'static, gpio::GpioPin<16>>,
     Delay,
 >;
 
@@ -106,10 +106,10 @@ async fn main(spawner: Spawner) {
     esp_hal_embassy::init(timer_group0.timer0);
 
     // Setup the EPD display, over the SPI bus.
-    let cs = gpio::Output::new_typed(peripherals.GPIO15, gpio::Level::High);
-    let busy = gpio::Input::new_typed(peripherals.GPIO25, gpio::Pull::None);
-    let rst = gpio::Output::new_typed(peripherals.GPIO26, gpio::Level::High);
-    let dc = gpio::Output::new_typed(peripherals.GPIO27, gpio::Level::Low);
+    let cs = gpio::Output::new_typed(peripherals.GPIO5, gpio::Level::High);
+    let busy = gpio::Input::new_typed(peripherals.GPIO4, gpio::Pull::None);
+    let rst = gpio::Output::new_typed(peripherals.GPIO16, gpio::Level::High);
+    let dc = gpio::Output::new_typed(peripherals.GPIO17, gpio::Level::Low);
 
     let spi = RefCell::new(
         Spi::new_typed_with_config(
@@ -120,13 +120,17 @@ async fn main(spawner: Spawner) {
                 ..Default::default()
             },
         )
-        .with_sck(peripherals.GPIO13)
-        .with_mosi(peripherals.GPIO14),
+        .with_cs(NoPin)
+        .with_miso(NoPin)
+        .with_sck(peripherals.GPIO18)
+        .with_mosi(peripherals.GPIO23),
     );
 
     let mut spi_bus = RefCellDevice::new(&spi, cs, delay).unwrap();
+    log::info!("Pre epd::new");
     let mut epd = EpdDisplay::new(&mut spi_bus, busy, dc, rst, &mut delay, None)
         .expect("EPaper should be present");
+    log::info!("Post epd::new");
 
     let display = make_static!(EpdBuffer, EpdBuffer::default());
     display.set_rotation(DisplayRotation::Rotate270);
